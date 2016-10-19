@@ -1,0 +1,57 @@
+global
+    log /dev/log    local0
+    log /dev/log    local1 notice
+    chroot /var/lib/haproxy
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log    global
+    mode    http
+   
+    option    httplog
+    option    dontlognull
+
+    timeout connect 5000
+    timeout client  50000
+    timeout server  50000
+    
+    errorfile 400 /etc/haproxy/errors/400.http
+    errorfile 403 /etc/haproxy/errors/403.http
+    errorfile 408 /etc/haproxy/errors/408.http
+    errorfile 500 /etc/haproxy/errors/500.http
+    errorfile 502 /etc/haproxy/errors/502.http
+    errorfile 503 /etc/haproxy/errors/503.http
+    errorfile 504 /etc/haproxy/errors/504.http
+
+listen  stats
+        bind *:9000
+        mode http
+        stats enable
+        stats hide-version #Hide HAPRoxy version, a necessity for any public-facing site
+        stats realm Haproxy\ Statistics #Show this text in authentication popup (escape space characters with backslash)
+        stats uri /
+        stats auth admin:admin #Set a username and password
+
+frontend http
+  bind *:80
+  mode http
+  {{range $project := ls "/services"}}
+  {{range $service := ls (printf "/services/%s" $project)}}
+  acl has_service_uri path_beg /{{$project}}/{{$service}}
+  use_backend {{$project}}_{{$service}} if has_service_uri
+  {{end}}
+  {{end}}
+  
+{{range $project := ls "/services"}}
+{{range $service := ls (printf "/services/%s" $project)}}
+backend {{$project}}_{{$service}}
+    mode http
+    balance roundrobin
+    option forwardfor
+    {{range $node := ls (printf "/services/%s/%s" $project $service)}}
+    server {{$node}} {{printf "/services/%s/%s/%s" $project $service $node | getv}} check
+    {{end}}
+{{end}} 
+{{end}}

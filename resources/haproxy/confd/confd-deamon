@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Must be a valid filename
+NAME=confd
+
+PIDFILE=/var/run/$NAME.pid
+
+CONFD=/usr/local/bin/confd
+CONFD_LOG_FILE=/var/log/$NAME.log
+
+case "$1" in
+  start)
+        echo -n "Starting deamon: "$NAME
+        start-stop-daemon --start --quiet --make-pidfile --pidfile $PIDFILE --exec $CONFD -- ${@:-""} >>$CONFD_LOG_FILE 2>&1 &
+        echo "."
+        ;;
+  stop)
+        echo -n "Stopping deamon: "$NAME
+        start-stop-daemon --stop --quiet --oknodo --pidfile $PIDFILE
+        echo "."
+        ;;
+  restart)
+        echo -n "Restarting deamon: "$NAME
+        start-stop-daemon --stop --quiet --oknodo --retry 30 --pidfile $PIDFILE
+        start-stop-daemon --start --quiet --make-pidfile --pidfile $PIDFILE --exec $CONFD -- ${@:-""}  >>$CONFD_LOG_FILE 2>&1 &
+        echo "."
+        ;;
+  *)
+        echo "Usage: "$1" {start|stop|restart}"
+        exit 1
+esac
+
+exit 0

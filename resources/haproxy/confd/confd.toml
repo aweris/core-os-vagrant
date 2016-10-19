@@ -1,0 +1,7 @@
+backend = "etcd"
+confdir = "/etc/confd"
+log-level = "debug"
+interval = 10
+nodes = [
+  "http://172.17.4.101:4001"
+]

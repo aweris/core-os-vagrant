@@ -1,0 +1,191 @@
+# -*- mode: ruby -*-
+# # vi: set ft=ruby :
+
+require 'fileutils'
+require 'open-uri'
+require 'tempfile'
+require 'yaml'
+
+Vagrant.require_version ">= 1.6.0"
+
+$update_channel = "alpha"
+
+$image_version = "current"
+
+$etcd_count = 1
+$etcd_vm_memory = 512
+$etcd_metadata = "environment=development"
+
+$worker_count = 2
+$worker_vm_memory = 1024
+$worker_metadata = "environment=development"
+
+$data_store_count = 2
+$data_store_vm_memory = 1024
+$data_store_metadata = "environment=development"
+
+$haproxy_vm_memory = 512
+$haproxy_ip = "172.17.4.50"
+
+CONFIG = File.expand_path("config.rb")
+
+if File.exist?(CONFIG)
+  require CONFIG
+end
+
+CLOUD_CONFIG_PATH = File.expand_path("cloud-config.yaml")
+
+def etcdIP(num)
+  return "172.17.4.#{num+100}"
+end
+
+def workerIP(num)
+  return "172.17.4.#{num+200}"
+end
+
+def data_storeIP(num)
+  return "172.17.4.#{num+150}"
+end
+
+$cluster_size = $etcd_count + $worker_count + $data_store_count
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "coreos-%s" % $update_channel
+
+  if $image_version != "current"
+    config.vm.box_version = $image_version
+  end
+
+  config.vm.box_url = "https://storage.googleapis.com/%s.release.core-os.net/amd64-usr/%s/coreos_production_vagrant.json" % [$update_channel, $image_version]
+
+  token = open($new_discovery_url).read
+
+  (1..$etcd_count).each do |i|
+    config.vm.define vm_name = "etcd-%d" % i do |etcd|
+      data = YAML.load(IO.readlines(CLOUD_CONFIG_PATH)[1.. -1].join)
+
+      data['write_files'][0]['content'] = "WEAVE_CLUSTER_SIZE=#{$cluster_size}"
+      
+      data['coreos']['etcd2']['name'] = vm_name
+      data['coreos']['etcd2']['discovery'] = token
+      data['coreos']['fleet']['metadata'] = $etcd_metadata
+
+      # Fix for YAML.load() converting reboot - strategy from 'off' to `false`
+      if data.key? 'coreos' and data['coreos'].key? 'update' and data['coreos']['update'].key? 'reboot-strategy'
+        if data['coreos']['update']['reboot-strategy'] == false
+          data['coreos']['update']['reboot-strategy'] = 'off'
+        end
+      end
+
+      yaml = YAML.dump(data)
+
+      etcd_config_file = Tempfile.new('etcd_config')
+      etcd_config_file.write("#cloud-config\n#{data.to_yaml}")
+      etcd_config_file.close
+
+      etcd.vm.hostname = vm_name
+
+      etcd.vm.provider :virtualbox do |vb|
+        vb.memory = $etcd_vm_memory
+      end
+
+      etcd.vm.network :private_network, ip: etcdIP(i)
+
+
+      etcd.vm.provision :file, :source => etcd_config_file.path, :destination => "/tmp/vagrantfile-user-data"
+      etcd.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+    end
+  end
+
+  (1..$data_store_count).each do |i|
+    config.vm.define vm_name = "data-store-%d" % i do |data_store|
+        
+      data = YAML.load(IO.readlines(CLOUD_CONFIG_PATH)[1..-1].join)
+
+      data['write_files'][0]['content'] = "WEAVE_CLUSTER_SIZE=#{$cluster_size}"
+        
+      data['coreos']['etcd2']['name'] = vm_name
+      data['coreos']['etcd2']['discovery'] = token
+
+      data['coreos']['fleet']['metadata'] = $data_store_metadata
+
+      # Fix for YAML.load() converting reboot-strategy from 'off' to `false`
+      if data.key? 'coreos' and data['coreos'].key? 'update' and data['coreos']['update'].key? 'reboot-strategy'
+        if data['coreos']['update']['reboot-strategy'] == false
+          data['coreos']['update']['reboot-strategy'] = 'off'
+        end
+      end
+
+      yaml = YAML.dump(data)
+
+      data_store_config_file = Tempfile.new('data_store_config')
+      data_store_config_file.write("#cloud-config\n#{data.to_yaml}")
+      data_store_config_file.close
+
+      data_store.vm.hostname = vm_name
+
+      data_store.vm.provider :virtualbox do |vb|
+        vb.memory = $data_store_vm_memory
+      end
+
+      data_store.vm.network :private_network, ip: data_storeIP(i)
+      
+      data_store.vm.provision :file, :source => data_store_config_file.path, :destination => "/tmp/vagrantfile-user-data"
+      data_store.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+    end
+  end
+
+  (1..$worker_count).each do |i|
+    config.vm.define vm_name = "worker-%d" % i do |worker|
+
+      data = YAML.load(IO.readlines(CLOUD_CONFIG_PATH)[1..-1].join)
+
+        data['write_files'][0]['content'] = "WEAVE_CLUSTER_SIZE=#{$cluster_size}"
+        
+      data['coreos']['etcd2']['name'] = vm_name
+      data['coreos']['etcd2']['discovery'] = token
+
+      data['coreos']['fleet']['metadata'] = $worker_metadata
+
+      # Fix for YAML.load() converting reboot-strategy from 'off' to `false`
+      if data.key? 'coreos' and data['coreos'].key? 'update' and data['coreos']['update'].key? 'reboot-strategy'
+        if data['coreos']['update']['reboot-strategy'] == false
+          data['coreos']['update']['reboot-strategy'] = 'off'
+        end
+      end
+
+      yaml = YAML.dump(data)
+
+      worker_config_file = Tempfile.new('worker_config')
+      worker_config_file.write("#cloud-config\n#{data.to_yaml}")
+      worker_config_file.close
+
+      worker.vm.hostname = vm_name
+
+      worker.vm.provider :virtualbox do |vb|
+        vb.memory = $worker_vm_memory
+      end
+
+      worker.vm.network :private_network, ip: workerIP(i)
+
+      worker.vm.provision :file, :source => worker_config_file.path, :destination => "/tmp/vagrantfile-user-data"
+      worker.vm.provision :shell, :inline => "mv /tmp/vagrantfile-user-data /var/lib/coreos-vagrant/", :privileged => true
+    end
+  end
+
+  config.vm.define vm_name = "haproxy" do |haproxy|
+    haproxy.vm.synced_folder "../resources/haproxy", "/resources/haproxy"
+
+    haproxy.vm.box = "ubuntu/precise64"
+    haproxy.vm.hostname = vm_name
+    haproxy.vm.box_url = "ubuntu/precise64"
+
+    haproxy.vm.network :private_network, ip: $haproxy_ip
+
+    haproxy.vm.provider :virtualbox do |vb|
+      vb.memory = $haproxy_vm_memory
+    end
+
+    haproxy.vm.provision "shell", inline: "/bin/sh /resources/haproxy/install_haproxy.sh", :privileged => true
+  end
+end
